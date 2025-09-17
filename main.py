@@ -135,7 +135,9 @@ class GeminiVideoAnalyzer:
             prompt = f"""
             我需要你详细分析这个直播视频，判断参考照片中的人物是否以真人形式出现在视频中。
 
+            **核心任务：基于生物特征的身份确认 + 截图证据支撑**
             **重要：仅关注不可变的生物特征，排除所有可变外在因素**
+            **必要：每个结论都必须提供时间戳截图作为可视化证据**
 
             **第一步：参考照片生物特征提取**
             请仅分析以下固有特征（忽略发型、服装、眼镜、饰品、妆容等）：
@@ -177,19 +179,37 @@ class GeminiVideoAnalyzer:
                - 验证五官固有形状是否一致
                - 计算面部比例关系的匹配度
 
-            **第三步：证据收集**
-            如果发现可能匹配，提供：
-            - 具体时间段和最佳证据时间戳
-            - 生物特征相似度评分（1-10分）
-            - 活体检测置信度（1-10分）
-            - 详细的生物特征对比分析
-            - 活体真实性证据描述
+            **第三步：证据收集（强制要求）**
+            **重要：无论结论如何，都必须提供时间戳截图作为证据**
 
-            **第四步：综合判断**
-            必须同时满足以下条件才能判定为同一人：
-            1. 生物特征高度匹配（≥8分）
-            2. 活体检测通过（≥8分）
-            3. 无照片伪造迹象
+            A. **如果判断为同一人**：
+               - 提供3-5个最相似的时间戳（最清晰的正面角度）
+               - 每个时间戳说明证明的具体生物特征
+               - 生物特征相似度评分（1-10分）
+               - 活体检测置信度（1-10分）
+
+            B. **如果判断为不同人**：
+               - 提供3-5个视频中主要人物的代表性时间戳
+               - 每个时间戳说明与参考照片的关键差异
+               - 重点展示不匹配的生物特征证据
+
+            C. **如果判断不确定**：
+               - 提供导致不确定的关键时间戳
+               - 说明哪些特征相似，哪些特征不同
+               - 解释为什么无法得出明确结论
+
+            **第四步：时间戳证据说明（必填）**
+            对每个提供的时间戳，必须说明：
+            1. **选择理由**：为什么选择这个时间点
+            2. **特征展示**：该截图显示的关键生物特征
+            3. **对比结论**：与参考照片的具体对比结果
+            4. **证据价值**：该截图对最终结论的支撑作用
+
+            **第五步：综合判断**
+            基于截图证据得出最终结论：
+            - 明确的判断结论（是/否/不确定）
+            - 整体置信度（1-10分）
+            - 关键证据总结
 
             **防伪警告级别**：
             - 低风险：自然动作，真实交互
@@ -198,10 +218,16 @@ class GeminiVideoAnalyzer:
 
             **输出格式要求：**
             在分析结论后，请单独列出：
-            EVIDENCE_TIMESTAMPS: [时间戳1, 时间戳2, 时间戳3...]
-            LIVENESS_SCORE: X/10
-            BIOMETRIC_SCORE: X/10
-            SPOOFING_RISK: 低风险/中风险/高风险
+            证据时间戳: [时间戳1, 时间戳2, 时间戳3...]
+            活体检测评分: X/10
+            生物特征评分: X/10
+            伪造风险评分: X/10 (1-3分为低风险，4-6分为中风险，7-10分为高风险)
+
+            **时间戳精度要求：**
+            - 请提供帧级精确时间戳，格式：MM:SS.FF 或 HH:MM:SS.FF
+            - 其中FF表示该秒内的帧数（例如：00:09.15 表示第9秒的第15帧）
+            - 这样可以精确定位到具体帧，提供最准确的截图证据
+            - 如果无法确定具体帧数，可使用 MM:SS.00 格式
 
             请开始你的专业生物识别分析。
             """
@@ -282,7 +308,7 @@ class GeminiVideoAnalyzer:
             comparison_file = None
 
             # 显示评分信息
-            if any([analysis_data['liveness_score'], analysis_data['biometric_score'], analysis_data['spoofing_risk']]):
+            if any([analysis_data['liveness_score'], analysis_data['biometric_score'], analysis_data['spoofing_risk_score']]):
                 print(f"\n📊 专业评分结果:")
                 if analysis_data['liveness_score'] is not None:
                     score_emoji = "✅" if analysis_data['liveness_score'] >= 8 else "⚠️" if analysis_data['liveness_score'] >= 6 else "❌"
@@ -290,9 +316,17 @@ class GeminiVideoAnalyzer:
                 if analysis_data['biometric_score'] is not None:
                     score_emoji = "✅" if analysis_data['biometric_score'] >= 8 else "⚠️" if analysis_data['biometric_score'] >= 6 else "❌"
                     print(f"   {score_emoji} 生物特征评分: {analysis_data['biometric_score']}/10")
-                if analysis_data['spoofing_risk'] is not None:
-                    risk_emoji = "🟢" if analysis_data['spoofing_risk'] == "低风险" else "🟡" if analysis_data['spoofing_risk'] == "中风险" else "🔴"
-                    print(f"   {risk_emoji} 伪造风险等级: {analysis_data['spoofing_risk']}")
+                if analysis_data['spoofing_risk_score'] is not None:
+                    if analysis_data['spoofing_risk_score'] <= 3:
+                        risk_emoji = "🟢"
+                        risk_level = "低风险"
+                    elif analysis_data['spoofing_risk_score'] <= 6:
+                        risk_emoji = "🟡"
+                        risk_level = "中风险"
+                    else:
+                        risk_emoji = "🔴"
+                        risk_level = "高风险"
+                    print(f"   {risk_emoji} 伪造风险评分: {analysis_data['spoofing_risk_score']}/10 ({risk_level})")
 
             if timestamps:
                 screenshot_files = self._extract_video_frames(video_path, timestamps)
@@ -324,7 +358,7 @@ class GeminiVideoAnalyzer:
                 'comparison_file': comparison_file,
                 'liveness_score': analysis_data['liveness_score'],
                 'biometric_score': analysis_data['biometric_score'],
-                'spoofing_risk': analysis_data['spoofing_risk']
+                'spoofing_risk_score': analysis_data['spoofing_risk_score']
             }
             
         except Exception as e:
@@ -340,40 +374,94 @@ class GeminiVideoAnalyzer:
             'timestamps': [],
             'liveness_score': None,
             'biometric_score': None,
-            'spoofing_risk': None
+            'spoofing_risk_score': None
         }
 
-        # 提取时间戳
-        timestamp_pattern = r'EVIDENCE_TIMESTAMPS:\s*\[(.*?)\]'
-        timestamp_match = re.search(timestamp_pattern, response_text, re.IGNORECASE)
-        if timestamp_match:
-            timestamps_str = timestamp_match.group(1)
-            time_pattern = r'(\d{1,2}:\d{2}(?::\d{2})?)'
-            result['timestamps'] = re.findall(time_pattern, timestamps_str)
+        # 提取时间戳（支持中英文格式和帧精度）
+        timestamp_patterns = [
+            r'证据时间戳:\s*\[(.*?)\]',
+            r'EVIDENCE_TIMESTAMPS:\s*\[(.*?)\]'
+        ]
+        for pattern in timestamp_patterns:
+            timestamp_match = re.search(pattern, response_text, re.IGNORECASE)
+            if timestamp_match:
+                timestamps_str = timestamp_match.group(1)
+                # 支持帧精度格式：MM:SS.FF 或 HH:MM:SS.FF，以及旧格式
+                time_pattern = r'(\d{1,2}:\d{2}(?::\d{2})?(?:\.\d{1,2})?)'
+                result['timestamps'] = re.findall(time_pattern, timestamps_str)
+                break
 
-        # 提取活体检测评分
-        liveness_pattern = r'LIVENESS_SCORE:\s*(\d+)/10'
-        liveness_match = re.search(liveness_pattern, response_text, re.IGNORECASE)
-        if liveness_match:
-            result['liveness_score'] = int(liveness_match.group(1))
+        # 提取活体检测评分（支持中英文格式）
+        liveness_patterns = [
+            r'活体检测评分:\s*(\d+)/10',
+            r'LIVENESS_SCORE:\s*(\d+)/10'
+        ]
+        for pattern in liveness_patterns:
+            liveness_match = re.search(pattern, response_text, re.IGNORECASE)
+            if liveness_match:
+                result['liveness_score'] = int(liveness_match.group(1))
+                break
 
-        # 提取生物特征评分
-        biometric_pattern = r'BIOMETRIC_SCORE:\s*(\d+)/10'
-        biometric_match = re.search(biometric_pattern, response_text, re.IGNORECASE)
-        if biometric_match:
-            result['biometric_score'] = int(biometric_match.group(1))
+        # 提取生物特征评分（支持中英文格式）
+        biometric_patterns = [
+            r'生物特征评分:\s*(\d+)/10',
+            r'BIOMETRIC_SCORE:\s*(\d+)/10'
+        ]
+        for pattern in biometric_patterns:
+            biometric_match = re.search(pattern, response_text, re.IGNORECASE)
+            if biometric_match:
+                result['biometric_score'] = int(biometric_match.group(1))
+                break
 
-        # 提取伪造风险级别
-        spoofing_pattern = r'SPOOFING_RISK:\s*(低风险|中风险|高风险)'
-        spoofing_match = re.search(spoofing_pattern, response_text, re.IGNORECASE)
-        if spoofing_match:
-            result['spoofing_risk'] = spoofing_match.group(1)
+        # 提取伪造风险评分（新的数字格式）
+        spoofing_score_pattern = r'伪造风险评分:\s*(\d+)/10'
+        spoofing_score_match = re.search(spoofing_score_pattern, response_text, re.IGNORECASE)
+        if spoofing_score_match:
+            result['spoofing_risk_score'] = int(spoofing_score_match.group(1))
 
         return result
 
+    def _convert_timestamp_to_frame_info(self, timestamp, fps):
+        """将时间戳转换为帧信息"""
+        # 分离时间和帧数
+        if '.' in timestamp:
+            time_part, frame_part = timestamp.split('.')
+            frame_offset = int(frame_part)
+        else:
+            time_part = timestamp
+            frame_offset = 0
+
+        # 解析时间部分
+        parts = time_part.split(':')
+        if len(parts) == 2:  # MM:SS格式
+            minutes, seconds = int(parts[0]), int(parts[1])
+            total_seconds = minutes * 60 + seconds
+        elif len(parts) == 3:  # HH:MM:SS格式
+            hours, minutes, seconds = int(parts[0]), int(parts[1]), int(parts[2])
+            total_seconds = hours * 3600 + minutes * 60 + seconds
+        else:
+            total_seconds = 0
+
+        # 计算精确帧号
+        base_frame = int(total_seconds * fps)
+        exact_frame = base_frame + frame_offset
+
+        return {
+            'total_seconds': total_seconds,
+            'frame_offset': frame_offset,
+            'exact_frame': exact_frame,
+            'timestamp_with_frame': f"{time_part}.{frame_offset:02d}"
+        }
+
     def _convert_timestamp_to_seconds(self, timestamp):
-        """将时间戳转换为秒数"""
-        parts = timestamp.split(':')
+        """将时间戳转换为秒数（保持向后兼容）"""
+        # 分离时间和帧数
+        if '.' in timestamp:
+            time_part, _ = timestamp.split('.')
+        else:
+            time_part = timestamp
+
+        parts = time_part.split(':')
         if len(parts) == 2:  # MM:SS格式
             minutes, seconds = int(parts[0]), int(parts[1])
             return minutes * 60 + seconds
@@ -383,7 +471,7 @@ class GeminiVideoAnalyzer:
         return 0
 
     def _extract_video_frames(self, video_path, timestamps, output_dir="screenshots"):
-        """根据时间戳提取视频帧"""
+        """根据时间戳提取视频帧（支持帧级精度）"""
         if not timestamps:
             return []
 
@@ -399,23 +487,43 @@ class GeminiVideoAnalyzer:
             return []
 
         fps = cap.get(cv2.CAP_PROP_FPS)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         extracted_files = []
 
-        for i, timestamp in enumerate(timestamps):
-            seconds = self._convert_timestamp_to_seconds(timestamp)
-            frame_number = int(seconds * fps)
+        print(f"   视频信息: {fps:.2f} FPS, 总帧数: {total_frames}")
 
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+        for i, timestamp in enumerate(timestamps):
+            # 获取精确帧信息
+            frame_info = self._convert_timestamp_to_frame_info(timestamp, fps)
+            exact_frame = frame_info['exact_frame']
+
+            # 确保帧号在有效范围内
+            if exact_frame >= total_frames:
+                exact_frame = total_frames - 1
+                print(f"   ⚠️  时间戳 {timestamp} 超出视频范围，使用最后一帧")
+
+            # 精确定位到指定帧
+            cap.set(cv2.CAP_PROP_POS_FRAMES, exact_frame)
             ret, frame = cap.read()
 
             if ret:
-                filename = f"evidence_{i+1}_{timestamp.replace(':', '-')}.jpg"
+                # 验证实际提取的帧号
+                actual_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+
+                # 生成文件名（替换特殊字符）
+                safe_timestamp = timestamp.replace(':', '-').replace('.', '_')
+                filename = f"evidence_{i+1}_{safe_timestamp}_frame{exact_frame}.jpg"
                 filepath = os.path.join(output_dir, filename)
                 cv2.imwrite(filepath, frame)
                 extracted_files.append(filepath)
-                print(f"   ✅ 已提取: {filename} (时间: {timestamp})")
+
+                print(f"   ✅ 已提取: {filename}")
+                print(f"       目标时间戳: {timestamp} (第{exact_frame}帧)")
+                print(f"       实际提取帧: 第{actual_frame}帧")
+                if abs(actual_frame - exact_frame) > 1:
+                    print(f"       ⚠️  帧偏移: {actual_frame - exact_frame}帧")
             else:
-                print(f"   ❌ 提取失败: 时间戳 {timestamp}")
+                print(f"   ❌ 提取失败: 时间戳 {timestamp} (第{exact_frame}帧)")
 
         cap.release()
         return extracted_files
@@ -475,10 +583,23 @@ class GeminiVideoAnalyzer:
 
                     canvas.paste(screenshot, (x, y))
 
-                    # 添加时间戳标签
+                    # 添加时间戳和帧号标签
                     filename = os.path.basename(screenshot_file)
-                    timestamp = filename.split('_')[2].replace('-', ':').replace('.jpg', '')
-                    draw.text((x, y - 25), f"时间: {timestamp}", fill='black', font=font)
+                    # 解析新格式的文件名: evidence_1_00-09_15_frame15.jpg
+                    parts = filename.split('_')
+                    if len(parts) >= 4 and 'frame' in parts[-1]:
+                        # 新格式: 有帧号信息
+                        timestamp_part = '_'.join(parts[2:-1])  # 00-09_15
+                        frame_part = parts[-1].replace('.jpg', '')  # frame15
+                        timestamp = timestamp_part.replace('-', ':').replace('_', '.')  # 00:09.15
+                        frame_num = frame_part.replace('frame', '')
+                        label = f"时间: {timestamp} (第{frame_num}帧)"
+                    else:
+                        # 旧格式: 只有时间戳
+                        timestamp = parts[2].replace('-', ':').replace('.jpg', '')
+                        label = f"时间: {timestamp}"
+
+                    draw.text((x, y - 25), label, fill='black', font=font)
 
                 except Exception as e:
                     print(f"   ⚠️  处理截图失败: {screenshot_file}, 错误: {e}")
